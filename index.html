@@ -68,8 +68,7 @@ const TICKERS = [
 ];
 
 function calcEMA(data, period) {
-  const k = 2 / (period + 1);
-  let ema = null;
+  const k = 2 / (period + 1); let ema = null;
   return data.map(d => {
     ema = ema === null ? d.close : d.close * k + ema * (1 - k);
     return { time: d.time, value: parseFloat(ema.toFixed(4)) };
@@ -77,25 +76,26 @@ function calcEMA(data, period) {
 }
 
 async function fetchOHLCV(ticker) {
-  const now  = Math.floor(Date.now() / 1000);
-  const from = now - (110 * 86400);
+  const now = Math.floor(Date.now() / 1000), from = now - (110 * 86400);
   const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${from}&period2=${now}&includePrePost=false`;
+  const yfUrl2 = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${from}&period2=${now}&includePrePost=false`;
   const proxies = [
     `https://api.allorigins.win/get?url=${encodeURIComponent(yfUrl)}`,
+    `https://api.allorigins.win/get?url=${encodeURIComponent(yfUrl2)}`,
     `https://corsproxy.io/?${encodeURIComponent(yfUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(yfUrl2)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yfUrl)}`
   ];
   for (const proxy of proxies) {
     try {
-      const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const raw = await res.text();
       let parsed;
       try { const w = JSON.parse(raw); parsed = w.contents ? JSON.parse(w.contents) : w; } catch { continue; }
       const result = parsed?.chart?.result?.[0];
       if (!result) continue;
-      const ts = result.timestamp, q = result.indicators.quote[0];
-      const bars = [];
+      const ts = result.timestamp, q = result.indicators.quote[0], bars = [];
       for (let i = 0; i < ts.length; i++) {
         if (!q.open[i] || !q.close[i]) continue;
         bars.push({ time: ts[i], open: +q.open[i].toFixed(4), high: +q.high[i].toFixed(4), low: +q.low[i].toFixed(4), close: +q.close[i].toFixed(4), volume: q.volume[i] || 0 });
@@ -130,15 +130,13 @@ function makeVolOpts(el) {
   };
 }
 
-const allCharts = [];
-const container = document.getElementById('chartsContainer');
+const allCharts = [], container = document.getElementById('chartsContainer');
 let currentTickers = [...TICKERS];
 
 async function buildCard(ticker) {
   const safeId = ticker.replace(/[^a-zA-Z0-9]/g,'_');
   const card = document.createElement('div');
-  card.className = 'chart-card';
-  card.dataset.ticker = ticker;
+  card.className = 'chart-card'; card.dataset.ticker = ticker;
   card.innerHTML = `
     <div class="sc-topbar">
       <div style="display:flex;align-items:center;gap:12px">
@@ -162,7 +160,6 @@ async function buildCard(ticker) {
     if (!bars.length) throw new Error('No data');
     document.getElementById('st_'+safeId).textContent = '';
 
-    // Header stats
     const last = bars[bars.length-1], prev = bars[bars.length-2];
     const chgPct = prev ? ((last.close-prev.close)/prev.close*100) : 0;
     const chgAmt = prev ? (last.close-prev.close) : 0;
@@ -179,14 +176,13 @@ async function buildCard(ticker) {
     // ── Price chart ──────────────────────────────────────────
     const chartEl = document.getElementById('cb_'+safeId);
     const chart = LightweightCharts.createChart(chartEl, makeChartOpts(chartEl));
-
     chart.addBarSeries({ upColor:'#111111', downColor:'#cc2200', thinBars:true, priceLineVisible:false }).setData(bars);
     chart.addLineSeries({ color:'#1144cc', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false }).setData(ema30data);
     chart.addLineSeries({ color:'#cc2200', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false }).setData(ema60data);
     chart.timeScale().fitContent();
     allCharts.push({ chart, el: chartEl });
 
-    // ── Volume chart ─────────────────────────────────────────
+    // ── Volume chart — use same data range as price chart ────
     const volEl = document.getElementById('vb_'+safeId);
     const volChart = LightweightCharts.createChart(volEl, makeVolOpts(volEl));
     const volSeries = volChart.addHistogramSeries({
@@ -199,7 +195,14 @@ async function buildCard(ticker) {
       value: b.volume,
       color: b.close >= b.open ? 'rgba(80,160,80,0.7)' : 'rgba(210,100,100,0.7)'
     })));
+
+    // ✅ KEY FIX: sync vol timescale to match price chart AFTER fitContent
     volChart.timeScale().fitContent();
+    setTimeout(() => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      if (range) volChart.timeScale().setVisibleLogicalRange(range);
+    }, 50);
+
     allCharts.push({ chart: volChart, el: volEl });
 
     // Sync crosshair
@@ -207,7 +210,6 @@ async function buildCard(ticker) {
       if (p?.time) volChart.setCrosshairPosition(0, p.time, volSeries);
       else volChart.clearCrosshairPosition();
     });
-
     // Sync scroll/zoom
     chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
       if (range) volChart.timeScale().setVisibleLogicalRange(range);
@@ -221,40 +223,20 @@ async function buildCard(ticker) {
 }
 
 async function renderCharts(tickers) {
-  container.innerHTML = ''; allCharts.length = 0;
-  currentTickers = tickers;
+  container.innerHTML = ''; allCharts.length = 0; currentTickers = tickers;
   document.getElementById('visibleCount').textContent = tickers.length;
-  for (let i = 0; i < tickers.length; i += 5) {
+  for (let i = 0; i < tickers.length; i += 5)
     await Promise.all(tickers.slice(i, i+5).map(buildCard));
-  }
 }
 
-function filterCharts(q) {
-  q = q.trim().toUpperCase();
-  renderCharts(q ? TICKERS.filter(t=>t.includes(q)) : TICKERS);
-}
-
-function scrollToTicker() {
-  const q = document.getElementById('filterInput').value.trim().toUpperCase();
-  document.querySelector(`.chart-card[data-ticker="${q}"]`)?.scrollIntoView({behavior:'smooth',block:'start'});
-}
-
+function filterCharts(q) { q=q.trim().toUpperCase(); renderCharts(q?TICKERS.filter(t=>t.includes(q)):TICKERS); }
+function scrollToTicker() { const q=document.getElementById('filterInput').value.trim().toUpperCase(); document.querySelector(`.chart-card[data-ticker="${q}"]`)?.scrollIntoView({behavior:'smooth',block:'start'}); }
 function refreshAll() { renderCharts(currentTickers); }
-
-function updateClock() {
-  document.getElementById('clock').textContent =
-    new Date().toLocaleTimeString('en-US',{hour12:false,timeZone:'America/Chicago'})+' CT';
-}
+function updateClock() { document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-US',{hour12:false,timeZone:'America/Chicago'})+' CT'; }
 setInterval(updateClock,1000); updateClock();
-
 window.addEventListener('scroll',()=>{ document.getElementById('scrollTop').classList.toggle('visible',window.scrollY>500); });
 window.addEventListener('resize',()=>{ allCharts.forEach(({chart,el})=>chart.resize(el.offsetWidth,el.offsetHeight)); });
-
-setInterval(()=>{
-  const ct = new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'}));
-  const h=ct.getHours(),m=ct.getMinutes(),day=ct.getDay();
-  if(day>=1&&day<=5&&(h>8||(h===8&&m>=30))&&h<16) refreshAll();
-},5*60*1000);
+setInterval(()=>{ const ct=new Date(new Date().toLocaleString('en-US',{timeZone:'America/Chicago'})); const h=ct.getHours(),m=ct.getMinutes(),day=ct.getDay(); if(day>=1&&day<=5&&(h>8||(h===8&&m>=30))&&h<16) refreshAll(); },5*60*1000);
 
 renderCharts(TICKERS);
 </script>
