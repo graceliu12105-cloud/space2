@@ -25,17 +25,17 @@
   .charts-container { padding: 10px 20px; display: flex; flex-direction: column; gap: 12px; max-width: 1300px; margin: 0 auto; }
   .chart-card { background: #fff; border: 1px solid #bbb; border-radius: 2px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
   .sc-topbar { background: #f5f5f5; border-bottom: 1px solid #ddd; padding: 4px 10px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; }
-  .sc-ticker { font-weight: 700; font-size: 14px; color: #111; font-family: Arial, sans-serif; letter-spacing: 0.5px; min-width: 60px; }
+  .sc-ticker { font-weight: 700; font-size: 14px; color: #111; font-family: Arial, sans-serif; min-width: 60px; }
   .sc-price { font-size: 14px; color: #111; font-weight: 600; }
-  .sc-chg.up { color: #006600; font-size: 12px; font-weight: 500; }
-  .sc-chg.dn { color: #cc0000; font-size: 12px; font-weight: 500; }
-  .sc-legend { font-size: 11px; display: flex; align-items: center; gap: 10px; font-family: Arial, sans-serif; }
+  .sc-chg.up { color: #006600; font-size: 12px; }
+  .sc-chg.dn { color: #cc0000; font-size: 12px; }
+  .sc-legend { font-size: 11px; display: flex; align-items: center; gap: 10px; }
   .leg-ema30 { color: #1144cc; font-weight: 600; }
   .leg-ema60 { color: #cc2200; font-weight: 600; }
   .leg-vol   { color: #559955; font-weight: 600; }
   .chart-status { font-size: 11px; color: #888; padding: 3px 10px; min-height: 18px; font-family: monospace; }
   .chart-body { width: 100%; height: 420px; }
-  .vol-body   { width: 100%; height: 90px; border-top: 1px solid #e0e0e0; position: relative; }
+  .vol-body   { width: 100%; height: 90px; border-top: 1px solid #e0e0e0; }
   footer { text-align: center; padding: 14px; font-family: monospace; font-size: 10px; color: #999; border-top: 1px solid #ccc; margin-top: 10px; background: #f5f5f5; }
   #scrollTop { position: fixed; bottom: 20px; right: 20px; width: 34px; height: 34px; background: #2b2b2b; color: #aaa; border: none; border-radius: 3px; font-size: 16px; cursor: pointer; display: none; align-items: center; justify-content: center; z-index: 200; }
   #scrollTop.visible { display: flex; }
@@ -85,7 +85,6 @@ async function fetchOHLCV(ticker) {
     `https://corsproxy.io/?${encodeURIComponent(yfUrl)}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(yfUrl)}`
   ];
-  let lastErr = null;
   for (const proxy of proxies) {
     try {
       const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
@@ -95,8 +94,7 @@ async function fetchOHLCV(ticker) {
       try { const w = JSON.parse(raw); parsed = w.contents ? JSON.parse(w.contents) : w; } catch { continue; }
       const result = parsed?.chart?.result?.[0];
       if (!result) continue;
-      const ts = result.timestamp;
-      const q  = result.indicators.quote[0];
+      const ts = result.timestamp, q = result.indicators.quote[0];
       const bars = [];
       for (let i = 0; i < ts.length; i++) {
         if (!q.open[i] || !q.close[i]) continue;
@@ -104,9 +102,9 @@ async function fetchOHLCV(ticker) {
       }
       bars.sort((a,b) => a.time - b.time);
       if (bars.length) return bars;
-    } catch(e) { lastErr = e; }
+    } catch(e) {}
   }
-  throw new Error(lastErr?.message || 'All proxies failed');
+  throw new Error('Data unavailable');
 }
 
 function makeChartOpts(el) {
@@ -127,13 +125,12 @@ function makeVolOpts(el) {
     layout: { background: { color: '#ffffff' }, textColor: '#888', fontFamily: "Arial, sans-serif", fontSize: 10 },
     grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
     rightPriceScale: { borderColor: '#ccc', scaleMargins: { top: 0.1, bottom: 0 } },
-    timeScale: { borderColor: '#ccc', timeVisible: false, fixLeftEdge: true, fixRightEdge: true, barSpacing: 4, minBarSpacing: 1 },
+    timeScale: { borderColor: '#ccc', timeVisible: false, fixLeftEdge: true, fixRightEdge: true, barSpacing: 10 },
     handleScroll: false, handleScale: false
   };
 }
 
 const allCharts = [];
-const allVolCharts = [];
 const container = document.getElementById('chartsContainer');
 let currentTickers = [...TICKERS];
 
@@ -157,14 +154,15 @@ async function buildCard(ticker) {
     </div>
     <div class="chart-status" id="st_${safeId}">Loading…</div>
     <div class="chart-body" id="cb_${safeId}"></div>
-    <div class="vol-body" id="vb_${safeId}"></div>`;
+    <div class="vol-body"   id="vb_${safeId}"></div>`;
   container.appendChild(card);
 
   try {
     const bars = await fetchOHLCV(ticker);
     if (!bars.length) throw new Error('No data');
-    document.getElementById('st_' + safeId).textContent = '';
+    document.getElementById('st_'+safeId).textContent = '';
 
+    // Header stats
     const last = bars[bars.length-1], prev = bars[bars.length-2];
     const chgPct = prev ? ((last.close-prev.close)/prev.close*100) : 0;
     const chgAmt = prev ? (last.close-prev.close) : 0;
@@ -172,69 +170,48 @@ async function buildCard(ticker) {
     const chgEl = document.getElementById('pc_'+safeId);
     chgEl.textContent = (chgPct>=0?'▲':'▼')+' '+Math.abs(chgAmt).toFixed(2)+' ('+(chgPct>=0?'+':'')+chgPct.toFixed(2)+'%)';
     chgEl.className = 'sc-chg '+(chgPct>=0?'up':'dn');
-
-    const volLabel = last.volume>=1e6?(last.volume/1e6).toFixed(2)+'M':(last.volume/1e3).toFixed(0)+'K';
-    document.getElementById('vol_'+safeId).textContent = volLabel;
+    document.getElementById('vol_'+safeId).textContent = last.volume>=1e6?(last.volume/1e6).toFixed(2)+'M':(last.volume/1e3).toFixed(0)+'K';
 
     const ema30data = calcEMA(bars,30), ema60data = calcEMA(bars,60);
     document.getElementById('e30_'+safeId).textContent = ema30data[ema30data.length-1].value.toFixed(2);
     document.getElementById('e60_'+safeId).textContent = ema60data[ema60data.length-1].value.toFixed(2);
 
+    // ── Price chart ──────────────────────────────────────────
     const chartEl = document.getElementById('cb_'+safeId);
     const chart = LightweightCharts.createChart(chartEl, makeChartOpts(chartEl));
 
-    const barSeries = chart.addBarSeries({ upColor:'#111111', downColor:'#cc2200', thinBars:true, priceLineVisible:false });
-    barSeries.setData(bars);
-
-    const ema30s = chart.addLineSeries({ color:'#1144cc', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false });
-    ema30s.setData(ema30data);
-
-    const ema60s = chart.addLineSeries({ color:'#cc2200', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false });
-    ema60s.setData(ema60data);
-
+    chart.addBarSeries({ upColor:'#111111', downColor:'#cc2200', thinBars:true, priceLineVisible:false }).setData(bars);
+    chart.addLineSeries({ color:'#1144cc', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false }).setData(ema30data);
+    chart.addLineSeries({ color:'#cc2200', lineWidth:1.5, priceLineVisible:false, lastValueVisible:true, crosshairMarkerVisible:false }).setData(ema60data);
     chart.timeScale().fitContent();
     allCharts.push({ chart, el: chartEl });
 
+    // ── Volume chart ─────────────────────────────────────────
     const volEl = document.getElementById('vb_'+safeId);
-    volEl.style.position = 'relative';
-    const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;display:block;';
-    volEl.appendChild(canvas);
-
     const volChart = LightweightCharts.createChart(volEl, makeVolOpts(volEl));
-    const volSeries = volChart.addHistogramSeries({ priceFormat:{type:'volume'}, priceScaleId:'right', scaleMargins:{top:0.1,bottom:0}, base:0, color:'rgba(0,0,0,0)' });
-    volSeries.setData(bars.map(b=>({ time:b.time, value:b.volume, color:'rgba(0,0,0,0)' })));
+    const volSeries = volChart.addHistogramSeries({
+      priceScaleId: 'right',
+      scaleMargins: { top: 0.1, bottom: 0 },
+      priceFormat: { type: 'volume' }
+    });
+    volSeries.setData(bars.map(b => ({
+      time:  b.time,
+      value: b.volume,
+      color: b.close >= b.open ? 'rgba(80,160,80,0.7)' : 'rgba(210,100,100,0.7)'
+    })));
     volChart.timeScale().fitContent();
+    allCharts.push({ chart: volChart, el: volEl });
 
-    function drawVolBars() {
-      const rect = volEl.getBoundingClientRect();
-      const W = rect.width, H = rect.height;
-      if (!W||!H) return;
-      canvas.width = W*window.devicePixelRatio; canvas.height = H*window.devicePixelRatio;
-      canvas.style.width = W+'px'; canvas.style.height = H+'px';
-      const ctx = canvas.getContext('2d');
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-      ctx.clearRect(0,0,W,H);
-      const maxVol = Math.max(...bars.map(b=>b.volume));
-      const barW = 12, N = bars.length, spacing = (W-50)/N;
-      bars.forEach((b,i) => {
-        const barH = (b.volume/maxVol)*(H-4);
-        const x = 4+i*spacing+spacing/2-barW/2, y = H-barH;
-        ctx.fillStyle = b.close>=b.open?'rgba(80,160,80,0.65)':'rgba(210,100,100,0.65)';
-        ctx.fillRect(Math.round(x), Math.round(y), barW, Math.round(barH));
-      });
-      ctx.fillStyle='#aaa'; ctx.font='9px Arial'; ctx.textAlign='right';
-      const maxLabel = maxVol>=1e6?(maxVol/1e6).toFixed(0)+'M':(maxVol/1e3).toFixed(0)+'K';
-      ctx.fillText(maxLabel, W-2, 10);
-    }
-    setTimeout(drawVolBars, 100);
-    window.addEventListener('resize', drawVolBars);
-
+    // Sync crosshair
     chart.subscribeCrosshairMove(p => {
       if (p?.time) volChart.setCrosshairPosition(0, p.time, volSeries);
       else volChart.clearCrosshairPosition();
     });
-    allCharts.push({ chart: volChart, el: volEl });
+
+    // Sync scroll/zoom
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (range) volChart.timeScale().setVisibleLogicalRange(range);
+    });
 
   } catch(e) {
     document.getElementById('st_'+safeId).textContent = '⚠ '+e.message;
@@ -244,12 +221,11 @@ async function buildCard(ticker) {
 }
 
 async function renderCharts(tickers) {
-  container.innerHTML = ''; allCharts.length = 0; allVolCharts.length = 0;
+  container.innerHTML = ''; allCharts.length = 0;
   currentTickers = tickers;
   document.getElementById('visibleCount').textContent = tickers.length;
-  const BATCH = 5;
-  for (let i = 0; i < tickers.length; i += BATCH) {
-    await Promise.all(tickers.slice(i, i+BATCH).map(buildCard));
+  for (let i = 0; i < tickers.length; i += 5) {
+    await Promise.all(tickers.slice(i, i+5).map(buildCard));
   }
 }
 
